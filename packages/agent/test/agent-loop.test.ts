@@ -1178,4 +1178,92 @@ describe("agentLoopContinue with AgentMessage", () => {
 		expect(messages.length).toBe(1);
 		expect(messages[0].role).toBe("assistant");
 	});
+
+	it("should refresh tools from getActiveTools after tool batch", async () => {
+		const toolSchemaA = Type.Object({ value: Type.String() });
+		const toolSchemaB = Type.Object({ msg: Type.String() });
+
+		const toolA: AgentTool<typeof toolSchemaA> = {
+			name: "activate",
+			label: "Activate",
+			description: "Activates tool B",
+			parameters: toolSchemaA,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "activated" }],
+					details: {},
+				};
+			},
+		};
+
+		const toolB: AgentTool<typeof toolSchemaB> = {
+			name: "newTool",
+			label: "New Tool",
+			description: "A dynamically activated tool",
+			parameters: toolSchemaB,
+			async execute(_id, params) {
+				return {
+					content: [{ type: "text", text: `new: ${params.msg}` }],
+					details: {},
+				};
+			},
+		};
+
+		let activeTools: AgentTool[] = [toolA];
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [toolA],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			getActiveTools: () => activeTools.slice(),
+		};
+
+		let callIndex = 0;
+		const toolsSentToLlm: Array<AgentTool[] | undefined> = [];
+		const streamFn = (_model: any, ctx: any) => {
+			toolsSentToLlm.push(ctx.tools?.slice());
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					// First: model calls "activate" tool
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tc-1", name: "activate", arguments: { value: "go" } }],
+						"toolUse",
+					);
+					// Simulate tool activation: add toolB to activeTools
+					activeTools = [toolA, toolB];
+					stream.push({ type: "done", reason: "toolUse", message });
+				} else if (callIndex === 1) {
+					// Second: model should see toolB and call it
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tc-2", name: "newTool", arguments: { msg: "hello" } }],
+						"toolUse",
+					);
+					stream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					stream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
+		for await (const _ of stream) {
+			// consume
+		}
+
+		// First LLM call should have seen only toolA
+		expect(toolsSentToLlm[0]?.map((t) => t.name)).toEqual(["activate"]);
+		// Second LLM call should see both tools after refresh
+		expect(toolsSentToLlm[1]?.map((t) => t.name)).toEqual(["activate", "newTool"]);
+		// Tool B was successfully called (no "not found" error)
+		expect(callIndex).toBe(3);
+	});
 });

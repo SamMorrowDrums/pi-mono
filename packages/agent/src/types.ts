@@ -190,6 +190,17 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	getFollowUpMessages?: () => Promise<AgentMessage[]>;
 
 	/**
+	 * Returns the current set of active tools from the agent.
+	 *
+	 * Called after each tool execution batch completes. If the returned array
+	 * differs from the current context tools, the context is updated so the
+	 * model sees newly activated (or deactivated) tools on its next turn.
+	 *
+	 * Contract: must not throw. Return undefined to skip the refresh.
+	 */
+	getActiveTools?: () => AgentTool<any>[] | undefined;
+
+	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
 	 * - "parallel": preflight tool calls sequentially, then execute allowed tools concurrently;

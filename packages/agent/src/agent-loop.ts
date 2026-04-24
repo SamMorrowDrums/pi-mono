@@ -211,6 +211,14 @@ async function runLoop(
 					currentContext.messages.push(result);
 					newMessages.push(result);
 				}
+
+				// Refresh tools from the live agent state after each tool batch.
+				// This lets tools registered or activated during execute() become
+				// visible to the model on its next turn.
+				const freshTools = config.getActiveTools?.();
+				if (freshTools) {
+					currentContext.tools = freshTools;
+				}
 			}
 
 			await emit({ type: "turn_end", message, toolResults });

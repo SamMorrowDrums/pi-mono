@@ -16,10 +16,10 @@ class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMe
 	}
 }
 
-function createAssistantMessage(text: string): AssistantMessage {
+function createAssistantMessage(text: string, content?: AssistantMessage["content"]): AssistantMessage {
 	return {
 		role: "assistant",
-		content: [{ type: "text", text }],
+		content: content ?? [{ type: "text", text }],
 		api: "openai-responses",
 		provider: "openai",
 		model: "mock",
@@ -31,7 +31,7 @@ function createAssistantMessage(text: string): AssistantMessage {
 			totalTokens: 0,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
-		stopReason: "stop",
+		stopReason: content?.some((c) => c.type === "toolCall") ? "toolUse" : "stop",
 		timestamp: Date.now(),
 	};
 }
@@ -459,5 +459,84 @@ describe("Agent", () => {
 
 		await agent.prompt("hello again");
 		expect(receivedSessionId).toBe("session-def");
+	});
+
+	it("should refresh tools mid-loop when state.tools is mutated during execute", async () => {
+		const { Type } = await import("typebox");
+
+		const activateSchema = Type.Object({ name: Type.String() });
+		const dynamicSchema = Type.Object({ input: Type.String() });
+		const dynamicExecuted: string[] = [];
+
+		const dynamicTool = {
+			name: "dynamic",
+			label: "Dynamic",
+			description: "Dynamically activated tool",
+			parameters: dynamicSchema,
+			async execute(_id: string, params: { input: string }) {
+				dynamicExecuted.push(params.input);
+				return {
+					content: [{ type: "text" as const, text: `dynamic: ${params.input}` }],
+					details: {},
+				};
+			},
+		};
+
+		let agent: Agent;
+		const activateTool = {
+			name: "activate",
+			label: "Activate",
+			description: "Activates the dynamic tool",
+			parameters: activateSchema,
+			async execute() {
+				// Mutate agent.state.tools mid-loop
+				agent.state.tools = [...agent.state.tools, dynamicTool] as typeof agent.state.tools;
+				return {
+					content: [{ type: "text" as const, text: "activated" }],
+					details: {},
+				};
+			},
+		};
+
+		let callIndex = 0;
+		agent = new Agent({
+			initialState: { tools: [activateTool] },
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					if (callIndex === 0) {
+						stream.push({
+							type: "done",
+							reason: "toolUse",
+							message: createAssistantMessage("", [
+								{ type: "toolCall", id: "tc-1", name: "activate", arguments: { name: "dynamic" } },
+							]),
+						});
+					} else if (callIndex === 1) {
+						stream.push({
+							type: "done",
+							reason: "toolUse",
+							message: createAssistantMessage("", [
+								{ type: "toolCall", id: "tc-2", name: "dynamic", arguments: { input: "works" } },
+							]),
+						});
+					} else {
+						stream.push({
+							type: "done",
+							reason: "stop",
+							message: createAssistantMessage("done"),
+						});
+					}
+					callIndex++;
+				});
+				return stream;
+			},
+		});
+
+		await agent.prompt("activate dynamic tool");
+
+		// dynamic tool should have been called successfully
+		expect(dynamicExecuted).toEqual(["works"]);
+		expect(callIndex).toBe(3);
 	});
 });

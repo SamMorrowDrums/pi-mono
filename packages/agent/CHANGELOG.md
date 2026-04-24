@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `setActiveTools()` changes during tool execution being invisible to the model until the next `prompt()` call. The agent loop now refreshes tools from the live agent state after each tool batch completes, so tools registered or activated mid-conversation are visible on the model's next turn.
+
 ## [0.70.0] - 2026-04-23
 
 ## [0.69.0] - 2026-04-22
