@@ -217,13 +217,28 @@ async function runLoop(
 				// visible to the model on its next turn.
 				const freshTools = config.getActiveTools?.();
 				if (freshTools) {
+					const oldNames = new Set(currentContext.tools?.map((t) => t.name) ?? []);
+					const newNames = new Set(freshTools.map((t) => t.name));
 					currentContext.tools = freshTools;
+
+					// Detect changes and notify via callback
+					if (config.onToolsChanged) {
+						const added = freshTools.filter((t) => !oldNames.has(t.name)).map((t) => t.name);
+						const removed = [...oldNames].filter((n) => !newNames.has(n));
+						if (added.length > 0 || removed.length > 0) {
+							const injected = config.onToolsChanged({ added, removed });
+							if (injected && injected.length > 0) {
+								pendingMessages = [...injected, ...pendingMessages];
+							}
+						}
+					}
 				}
 			}
 
 			await emit({ type: "turn_end", message, toolResults });
 
-			pendingMessages = (await config.getSteeringMessages?.()) || [];
+			const steeringMessages = (await config.getSteeringMessages?.()) || [];
+			pendingMessages = [...pendingMessages, ...steeringMessages];
 		}
 
 		// Agent would stop here. Check for follow-up messages.

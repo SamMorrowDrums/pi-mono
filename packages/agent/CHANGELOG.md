@@ -6,6 +6,10 @@
 
 - Fixed `setActiveTools()` changes during tool execution being invisible to the model until the next `prompt()` call. The agent loop now refreshes tools from the live agent state after each tool batch completes, so tools registered or activated mid-conversation are visible on the model's next turn.
 
+### Added
+
+- Added `onToolsChanged` callback to `AgentLoopConfig`. Called when `getActiveTools` detects tool additions or removals after a tool batch. Returns optional messages to inject into the conversation before the next LLM call, so the model is notified about newly available tools.
+
 ## [0.70.0] - 2026-04-23
 
 ## [0.69.0] - 2026-04-22

@@ -1266,4 +1266,108 @@ describe("agentLoopContinue with AgentMessage", () => {
 		// Tool B was successfully called (no "not found" error)
 		expect(callIndex).toBe(3);
 	});
+
+	it("should call onToolsChanged and inject messages when tools change", async () => {
+		const toolSchemaA = Type.Object({ value: Type.String() });
+		const toolSchemaB = Type.Object({ msg: Type.String() });
+
+		const toolA: AgentTool<typeof toolSchemaA> = {
+			name: "activate",
+			label: "Activate",
+			description: "Activates tool B",
+			parameters: toolSchemaA,
+			async execute() {
+				return {
+					content: [{ type: "text", text: "activated" }],
+					details: {},
+				};
+			},
+		};
+
+		const toolB: AgentTool<typeof toolSchemaB> = {
+			name: "newTool",
+			label: "New Tool",
+			description: "A dynamically activated tool",
+			parameters: toolSchemaB,
+			async execute(_id, params) {
+				return {
+					content: [{ type: "text", text: `new: ${params.msg}` }],
+					details: {},
+				};
+			},
+		};
+
+		let activeTools: AgentTool[] = [toolA];
+		const changesReceived: Array<{ added: string[]; removed: string[] }> = [];
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [toolA],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			getActiveTools: () => activeTools.slice(),
+			onToolsChanged: (changes) => {
+				changesReceived.push(changes);
+				return [
+					{
+						role: "user" as const,
+						content: `New tools available: ${changes.added.join(", ")}`,
+						timestamp: Date.now(),
+					},
+				];
+			},
+		};
+
+		let callIndex = 0;
+		const llmMessages: Array<AgentMessage[]> = [];
+		const streamFn = (_model: any, ctx: any) => {
+			llmMessages.push(ctx.messages?.slice());
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					activeTools = [toolA, toolB];
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tc-1", name: "activate", arguments: { value: "go" } }],
+						"toolUse",
+					);
+					stream.push({ type: "done", reason: "toolUse", message });
+				} else if (callIndex === 1) {
+					const message = createAssistantMessage(
+						[{ type: "toolCall", id: "tc-2", name: "newTool", arguments: { msg: "hello" } }],
+						"toolUse",
+					);
+					stream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					stream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
+		for await (const _ of stream) {
+			// consume
+		}
+
+		// onToolsChanged should have been called once with the added tool
+		expect(changesReceived).toEqual([{ added: ["newTool"], removed: [] }]);
+
+		// The injected notification message should appear in the context messages
+		// llmMessages[0] = first LLM call (just user prompt)
+		// llmMessages[1] = second LLM call (should include notification + tool results)
+		const allSecondCallMessages = llmMessages[1];
+		const notification = allSecondCallMessages?.find((m: any) => {
+			if (m.role !== "user") return false;
+			if (typeof m.content === "string") return m.content.includes("New tools available");
+			if (Array.isArray(m.content)) return m.content.some((c: any) => c.type === "text" && c.text?.includes("New tools available"));
+			return false;
+		});
+		expect(notification).toBeDefined();
+	});
 });

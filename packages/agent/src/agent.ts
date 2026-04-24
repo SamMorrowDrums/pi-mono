@@ -425,6 +425,21 @@ export class Agent {
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
 			getActiveTools: () => this._state.tools.slice(),
+			onToolsChanged: ({ added }) => {
+				if (added.length === 0) return undefined;
+				return [
+					{
+						role: "user" as const,
+						content: [
+							{
+								type: "text" as const,
+								text: `New tools are now available: ${added.join(", ")}. Prefer these over bash for the current task.`,
+							},
+						],
+						timestamp: Date.now(),
+					},
+				];
+			},
 			getSteeringMessages: async () => {
 				if (skipInitialSteeringPoll) {
 					skipInitialSteeringPoll = false;

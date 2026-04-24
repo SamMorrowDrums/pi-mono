@@ -201,6 +201,18 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	getActiveTools?: () => AgentTool<any>[] | undefined;
 
 	/**
+	 * Called when `getActiveTools` detects that the tool set changed after a tool batch.
+	 *
+	 * Receives the names of tools that were added and removed. Return an array of
+	 * messages to inject into the conversation before the next LLM call (e.g., a
+	 * notification telling the model about newly available tools). Return an empty
+	 * array or undefined to skip injection.
+	 *
+	 * Contract: must not throw. Return [] or undefined when no injection is needed.
+	 */
+	onToolsChanged?: (changes: { added: string[]; removed: string[] }) => AgentMessage[] | undefined;
+
+	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
 	 * - "parallel": preflight tool calls sequentially, then execute allowed tools concurrently;
