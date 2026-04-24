@@ -538,5 +538,14 @@ describe("Agent", () => {
 		// dynamic tool should have been called successfully
 		expect(dynamicExecuted).toEqual(["works"]);
 		expect(callIndex).toBe(3);
+
+		// Default onToolsChanged should have injected a notification message
+		const notification = agent.state.messages.find(
+			(m) =>
+				m.role === "user" &&
+				Array.isArray(m.content) &&
+				m.content.some((c) => c.type === "text" && "text" in c && c.text.includes("New tools are now available: dynamic")),
+		);
+		expect(notification).toBeDefined();
 	});
 });
