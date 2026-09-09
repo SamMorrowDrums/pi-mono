@@ -767,6 +767,39 @@ function applyOpenAIGrammarToolCompatMetadata(model: Model<Api>): void {
 	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsOpenAIGrammarTools: true };
 }
 
+// GitHub Copilot's Anthropic gateway implements `defer_loading` + `tool_reference`
+// natively, but only for the Claude models it actually serves, and support is not
+// implied by the Claude version: `claude-sonnet-4` and `claude-sonnet-4.6` are
+// rejected outright by the gateway. Each id below was verified with a live probe
+// (deferred schemas withheld from `input_tokens`, `tool_reference` accepted, the
+// activated tool callable afterwards). An id that has not been probed falls back to
+// the full tool list, so a new Copilot Claude id arriving from upstream metadata can
+// never silently advertise a capability it was never checked for.
+//
+// Direct Anthropic is deliberately not listed here: it keeps the version-based
+// default in `anthropic-messages.ts`, because Anthropic ships dated snapshots of the
+// same model (`claude-opus-4-6-20260101`) where an exact-id allowlist would silently
+// disable deferral for every new snapshot.
+const GITHUB_COPILOT_TOOL_REFERENCE_MODEL_IDS = new Set([
+	"claude-opus-5",
+	"claude-sonnet-5",
+	"claude-opus-4.8",
+	"claude-opus-4.7",
+	"claude-fable-5.1",
+	"claude-haiku-4.5",
+]);
+
+// Copilot's gateway also implements Anthropic's server-side tool search, which is what
+// makes a deferred tool discoverable when no skill pushes it. Verified per id by requesting
+// `tool_search_tool_bm25_20251119` and observing `server_tool_use` ->
+// `tool_search_tool_result` -> `tool_use` on the deferred tool. The provider derives
+// `supportsToolSearch` from `supportsToolReferences`, so no separate flag is emitted.
+function applyAnthropicToolReferenceMetadata(model: Model<Api>): void {
+	if (model.api !== "anthropic-messages" || model.provider !== "github-copilot") return;
+	if (!GITHUB_COPILOT_TOOL_REFERENCE_MODEL_IDS.has(model.id)) return;
+	mergeAnthropicMessagesCompat(model, { supportsToolReferences: true });
+}
+
 function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
 	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
@@ -2757,6 +2790,7 @@ async function generateModels() {
 		applyStrictToolCompatMetadata(model);
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
+		applyAnthropicToolReferenceMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);
 	}
 

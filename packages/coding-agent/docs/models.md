@@ -396,6 +396,16 @@ Some Anthropic-compatible providers emit thinking blocks with empty signatures a
 
 Built-in Anthropic models enable `supportsStrictTools` in their model metadata. Custom Anthropic-compatible models must set it to `true` when their endpoint accepts strict JSON-schema tool definitions.
 
+`supportsToolReferences` controls native deferred tool loading (`tools[].defer_loading` plus `tool_reference` content). It is resolved in three steps, and an explicit `compat` value always wins in both directions:
+
+1. An explicit `compat.supportsToolReferences` in `models.json`. Set it to `true` to enable native handling on a verified proxy, or `false` to opt a built-in model out.
+2. Otherwise, the built-in model catalog. GitHub Copilot Claude models carry this flag from a probe-verified allowlist; unlisted ids do not.
+3. Otherwise, a version heuristic that applies only to the first-party `anthropic` provider: non-Haiku Sonnet, Opus, and Fable at version 4.5 or newer, matching both `claude-opus-4-5-20250929` and `claude-opus-4.8`.
+
+Leave it unset unless you have confirmed the endpoint accepts both fields; enabling it against an endpoint that does not causes a 400. See [Dynamic Tool Loading](extensions.md#dynamic-tool-loading) for the protocol, the diagnostics emitted when deferral is unavailable, and the one-shot downgrade on a rejecting endpoint.
+
+`supportsToolSearch` controls whether the server-side search tool (`tool_search_tool_bm25_20251119`) is offered alongside deferred definitions, letting the model find a deferred tool that no skill loads for it. On `anthropic-messages` it defaults to on and is only consulted where `supportsToolReferences` is on, since Anthropic only loads a deferred schema through a `tool_reference` returned from search. Set it to `false` for an endpoint that resolves `tool_reference` blocks but rejects the search tool; that also disables registration-time deferral, because a tool deferred at registration would otherwise have no way to be found. On `openai-responses` and `openai-codex-responses` it is a plain opt-in flag defaulting to off.
+
 ```json
 {
   "providers": {
@@ -430,6 +440,8 @@ Built-in Anthropic models enable `supportsStrictTools` in their model metadata. 
 | `forceAdaptiveThinking` | Whether to send adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) for this model. Built-in adaptive models set this automatically. Default: `false`. |
 | `allowEmptySignature` | Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: `false`. |
 | `supportsStrictTools` | Whether the provider accepts strict JSON-schema tool definitions. Default: `false`; built-in Anthropic models enable it in generated metadata. |
+| `supportsToolReferences` | Whether the provider accepts native deferred tool loading (`tools[].defer_loading` and `tool_reference` content). Overrides both the built-in catalog and the version heuristic in either direction. Default: unset, resolved as described above. |
+| `supportsToolSearch` | Whether the provider accepts Anthropic's server-side search tool, which lets the model find deferred tools no skill loads for it. Default: unset, following `supportsToolReferences`. Set `false` for an endpoint that resolves references but rejects the search tool; that also disables registration-time deferral. |
 
 ## OpenAI Compatibility
 

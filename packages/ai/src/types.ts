@@ -691,6 +691,18 @@ export interface AnthropicMessagesCompat {
 	 * except Haiku and models older than Claude 4.5; false for other providers.
 	 */
 	supportsToolReferences?: boolean;
+	/**
+	 * Whether the provider supports Anthropic's server-side tool search tool
+	 * (`tool_search_tool_bm25_20251119`), which lets the model discover a deferred
+	 * tool that no tool result introduced.
+	 *
+	 * Defaults to `supportsToolReferences`, because Anthropic defines `defer_loading`
+	 * as "only loaded when returned via tool_reference from tool search". Set it to
+	 * false for an endpoint that resolves references but rejects the search tool: a
+	 * tool registered with `deferred: true` is then sent up front and reported rather
+	 * than hidden with nothing able to load it.
+	 */
+	supportsToolSearch?: boolean;
 }
 
 /** Compatibility settings for Amazon Bedrock models. */

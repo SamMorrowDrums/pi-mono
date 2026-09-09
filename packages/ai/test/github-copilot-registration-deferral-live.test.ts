@@ -148,7 +148,10 @@ interface AnthropicPayload {
 
 interface ProbeResult {
 	promptTokens: number;
+	/** Client tool names only; the provider-injected search tool is reported separately. */
 	toolNames: string[];
+	/** Whether mcpi appended Anthropic's server-side search tool to the request. */
+	searchTool: boolean;
 	deferred: string[];
 	toolReferences: string[];
 }
@@ -175,17 +178,10 @@ function toolReferenceNames(payload: AnthropicPayload | undefined): string[] {
 }
 
 async function probe(context: Context): Promise<ProbeResult> {
+	// No capability pin: the Copilot catalog now advertises deferral for this model, so the probe
+	// exercises the shipped default rather than a forced one.
 	const base = getModel("github-copilot", "claude-opus-5");
-	// Force the capability on. The host seam is what this probe exercises; whether the Copilot
-	// catalog advertises deferral by default is separate metadata that lands with the provider
-	// change, and is covered offline by the provider matrix test. Pinning it here keeps the probe
-	// measuring the one thing only a live request can show: that the real gateway accepts
-	// `defer_loading` and actually withholds the schemas from the billed prompt.
-	const model: Model<"anthropic-messages"> = {
-		...base,
-		compat: { ...base.compat, supportsToolReferences: true },
-		...(BASE_URL ? { baseUrl: BASE_URL } : {}),
-	};
+	const model: Model<"anthropic-messages"> = { ...base, ...(BASE_URL ? { baseUrl: BASE_URL } : {}) };
 	let payload: AnthropicPayload | undefined;
 	const s = streamSimple(model, context, {
 		apiKey: TOKEN,
@@ -205,7 +201,8 @@ async function probe(context: Context): Promise<ProbeResult> {
 	const { input, cacheRead, cacheWrite } = response.usage;
 	return {
 		promptTokens: input + cacheRead + cacheWrite,
-		toolNames: (payload?.tools ?? []).map((t) => t.name),
+		toolNames: (payload?.tools ?? []).map((t) => t.name).filter((name) => !name.startsWith("tool_search_tool")),
+		searchTool: (payload?.tools ?? []).some((t) => t.name.startsWith("tool_search_tool")),
 		deferred: (payload?.tools ?? []).filter((t) => t.defer_loading).map((t) => t.name),
 		toolReferences: toolReferenceNames(payload),
 	};
@@ -216,11 +213,7 @@ async function call(
 	context: Context,
 ): Promise<{ message: AssistantMessage; payload: AnthropicPayload | undefined; calls: ToolCall[] }> {
 	const base = getModel("github-copilot", "claude-opus-5");
-	const model: Model<"anthropic-messages"> = {
-		...base,
-		compat: { ...base.compat, supportsToolReferences: true },
-		...(BASE_URL ? { baseUrl: BASE_URL } : {}),
-	};
+	const model: Model<"anthropic-messages"> = { ...base, ...(BASE_URL ? { baseUrl: BASE_URL } : {}) };
 	let payload: AnthropicPayload | undefined;
 	const s = streamSimple(model, context, {
 		apiKey: TOKEN,
@@ -249,6 +242,9 @@ describe.skipIf(!TOKEN)("GitHub Copilot registration deferral (live)", () => {
 			expect(deferredRun.toolNames).toEqual([IMMEDIATE_NAME, ...DEFERRED_NAMES]);
 			expect(deferredRun.deferred).toEqual(DEFERRED_NAMES);
 			expect(deferredRun.toolReferences).toEqual([]);
+			// Sent alongside the deferred definitions, so a deferred tool no marker names is still
+			// reachable. Nothing else in this file would notice if it stopped being appended.
+			expect(deferredRun.searchTool).toBe(true);
 
 			// An `addedToolNames` marker activates two of them at that tool-result position. The
 			// rest stay deferred and the tools array is unchanged, so the cacheable prefix holds.
@@ -262,6 +258,8 @@ describe.skipIf(!TOKEN)("GitHub Copilot registration deferral (live)", () => {
 			const inline = await probe(turnZero(makeTools(false)));
 			expect(inline.deferred).toEqual([]);
 			expect(inline.toolNames).toEqual([IMMEDIATE_NAME, ...DEFERRED_NAMES]);
+			// Nothing is held back, so there is no catalog to search and no search tool to send.
+			expect(inline.searchTool).toBe(false);
 
 			// A conservative floor, so the test tracks the capability rather than a tokenizer
 			// revision. The measured turn-zero pair was 1,650 inline against 543 deferred.
